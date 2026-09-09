@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stint</title>
+<title>Timers</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231a1f1c'/><rect x='6' y='13' width='11' height='6' rx='3' fill='%23e6e8e3'/><rect x='19' y='13' width='7' height='6' rx='3' fill='%232f6b4f'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -137,7 +137,7 @@
 
   <header>
     <div>
-      <h1>Stint</h1>
+      <h1>Timers</h1>
       <p class="lede">One task runs at a time. Starting a task stops the one before it.</p>
     </div>
     <div class="today" id="today"></div>
@@ -183,7 +183,7 @@
 (function(){
   "use strict";
 
-  var KEY = "stint.v1";
+  var KEY = "Timers.v1";
   var COLORS = ["#3f6b57","#44618f","#8a5a6d","#7b6a3a","#5e7e86","#6b5b8a","#8a6242","#4f7a4a"];
 
   var state = load();
@@ -390,14 +390,14 @@
       nm.appendChild(document.createTextNode(t ? t.name : "Unknown"));
       tm.textContent = hms(now - cur.start);
       document.getElementById("stopBtn").disabled = false;
-      document.title = hms(now - cur.start) + " · " + (t ? t.name : "Stint");
+      document.title = hms(now - cur.start) + " · " + (t ? t.name : "Timers");
     }else{
       panel.classList.add("idle");
       panel.style.borderLeftColor = "var(--line)";
       nm.textContent = state.tasks.length ? "Nothing running — pick a task" : "Nothing running";
       tm.textContent = "0:00:00";
       document.getElementById("stopBtn").disabled = true;
-      document.title = "Stint";
+      document.title = "Timers";
     }
 
     // rows
@@ -447,7 +447,7 @@
     var now = Date.now(), tot = totals(now), sum = 0, id;
     for(id in tot) sum += tot[id];
     var sp = span(now);
-    var lines = ["Stint — " + new Date().toLocaleDateString()];
+    var lines = ["Timers — " + new Date().toLocaleDateString()];
     if(sp) lines.push(clock(sp.from) + "–" + clock(sp.to) + "   total " + hms(sum));
     lines.push("");
     var w = 4;
@@ -510,7 +510,7 @@
   });
   document.getElementById("csvBtn").addEventListener("click", function(){
     if(!state.segments.length){ toast("Nothing tracked yet"); return; }
-    download(csv(), "stint-" + new Date().toISOString().slice(0,10) + ".csv");
+    download(csv(), "Timers-" + new Date().toISOString().slice(0,10) + ".csv");
   });
   document.getElementById("clearBtn").addEventListener("click", function(){
     if(!state.tasks.length && !state.segments.length) return;
