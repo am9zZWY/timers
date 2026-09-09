@@ -80,7 +80,15 @@
   .name{font-weight:500;overflow-wrap:anywhere}
   .task.on .name{color:var(--live)}
   .share{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:auto;padding-left:10px;flex:none}
-  .dur{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;flex:none;width:8.5ch;text-align:right}
+  .dur{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;flex:none;width:8.5ch;
+       text-align:right;font-weight:400;background:none;border:0;border-bottom:1px dotted transparent;
+       padding:4px 0;color:inherit;cursor:pointer;border-radius:0}
+  .dur:hover{border-bottom-color:var(--muted)}
+  .dur.adj{border-bottom-color:var(--line)}
+  .timeedit{font-family:var(--mono);font-size:15px;width:8.5ch;text-align:right;flex:none;
+            border:0;border-bottom:1px solid var(--ink);background:none;padding:4px 0;
+            color:inherit;border-radius:0}
+  .timeedit:focus{outline:none}
   .tools{display:flex;gap:6px;flex:none;padding-left:12px}
   .icon{font:inherit;font-size:13px;background:none;border:1px solid var(--line);border-radius:2px;
         padding:7px 11px;line-height:1.2;cursor:pointer;color:var(--muted);white-space:nowrap}
@@ -168,13 +176,14 @@
   <div class="sum">
     <span class="total">Tracked today <b id="total">0:00:00</b></span>
     <div class="acts">
+      <button class="btn ghost" id="undoBtn" disabled>Undo</button>
       <button class="btn ghost" id="copyBtn">Copy summary</button>
       <button class="btn ghost" id="csvBtn">Download CSV</button>
       <button class="btn ghost" id="clearBtn">Clear all</button>
     </div>
   </div>
 
-  <p class="hint">Press <kbd>1</kbd>–<kbd>9</kbd> to switch tasks, <kbd>0</kbd> to stop. Everything stays in this browser.</p>
+  <p class="hint">Press <kbd>1</kbd>–<kbd>9</kbd> to switch tasks, <kbd>0</kbd> to stop, <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo. Click a duration to correct it. Everything stays in this browser.</p>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -190,6 +199,18 @@
   var rows = Object.create(null);   // taskId -> {dur, share}
   var segEls = [];                  // {el, seg}
   var editing = null;
+  var history = [];                 // JSON snapshots, newest last
+
+  /* ---------- undo ---------- */
+  function snapshot(){
+    history.push(JSON.stringify(state));
+    if(history.length > 50) history.shift();
+  }
+  function undo(){
+    if(!history.length){ toast("Nothing to undo"); return; }
+    state = JSON.parse(history.pop());
+    save(); render(); toast("Undone");
+  }
 
   /* ---------- storage ---------- */
   function load(){
@@ -213,7 +234,7 @@
     var s = state.segments[state.segments.length-1];
     return (s && s.end == null) ? s : null;
   }
-  function totals(now){
+  function rawTotals(now){
     var t = Object.create(null), i, s;
     for(i=0;i<state.tasks.length;i++) t[state.tasks[i].id] = 0;
     for(i=0;i<state.segments.length;i++){
@@ -222,6 +243,34 @@
       t[s.taskId] += (s.end == null ? now : s.end) - s.start;
     }
     return t;
+  }
+  function totals(now){
+    var t = rawTotals(now), i, k;
+    for(i=0;i<state.tasks.length;i++){
+      k = state.tasks[i];
+      t[k.id] = Math.max(0, t[k.id] + (k.adjust || 0));
+    }
+    return t;
+  }
+  // "1:23:45" · "1:23" · "90m" · "1h30" · "2.5h" · "45" (minutes)
+  function parseDur(str){
+    str = String(str || "").trim().toLowerCase().replace(",", ".");
+    if(!str) return null;
+    if(str.indexOf(":") > -1){
+      var p = str.split(":").map(function(x){ return parseFloat(x) || 0; });
+      if(p.length === 3) return ((p[0]*3600) + (p[1]*60) + p[2]) * 1000;
+      if(p.length === 2) return ((p[0]*3600) + (p[1]*60)) * 1000;
+      return null;
+    }
+    var m = str.match(/^(\d+(\.\d+)?)\s*h\s*(\d+(\.\d+)?)?\s*m?$/);
+    if(m) return (parseFloat(m[1])*3600 + (parseFloat(m[3]) || 0)*60) * 1000;
+    m = str.match(/^(\d+(\.\d+)?)\s*m(in)?$/);
+    if(m) return parseFloat(m[1]) * 60000;
+    m = str.match(/^(\d+)\s*s(ec)?$/);
+    if(m) return parseFloat(m[1]) * 1000;
+    m = str.match(/^\d+(\.\d+)?$/);
+    if(m) return parseFloat(str) * 60000;
+    return null;
   }
   function span(now){
     if(!state.segments.length) return null;
@@ -253,12 +302,14 @@
   function addTask(name){
     name = (name||"").trim();
     if(!name) return null;
-    var t = {id:uid(), name:name, color:COLORS[state.tasks.length % COLORS.length]};
+    snapshot();
+    var t = {id:uid(), name:name, color:COLORS[state.tasks.length % COLORS.length], adjust:0};
     state.tasks.push(t); save(); render();
     return t;
   }
   function start(id){
     var now = Date.now(), cur = live();
+    snapshot();
     if(cur){
       cur.end = now;
       if(cur.taskId === id){ save(); render(); return; }  // clicking the running task stops it
@@ -269,12 +320,14 @@
   function stop(){
     var cur = live();
     if(!cur) return;
+    snapshot();
     cur.end = Date.now(); save(); render();
   }
   function removeTask(id){
     var t = byId(id);
     var tot = totals(Date.now())[id] || 0;
     if(tot > 0 && !confirm("Delete “" + t.name + "” and its " + hms(tot) + "?")) return;
+    snapshot();
     state.tasks = state.tasks.filter(function(x){ return x.id !== id; });
     state.segments = state.segments.filter(function(s){ return s.taskId !== id; });
     save(); render();
@@ -307,8 +360,13 @@
 
       pick.addEventListener("click", function(){ start(t.id); });
 
-      var dur = document.createElement("span");
-      dur.className = "dur";
+      var dur = document.createElement("button");
+      dur.className = "dur" + (t.adjust ? " adj" : "");
+      dur.type = "button";
+      dur.title = t.adjust ? "Edit time (manually adjusted by " + (t.adjust > 0 ? "+" : "−") + hms(Math.abs(t.adjust)) + ")"
+                           : "Edit time";
+      dur.setAttribute("aria-label", "Edit time for " + t.name);
+      dur.addEventListener("click", function(){ editDur(t, dur); });
 
       var tools = document.createElement("span");
       tools.className = "tools";
@@ -330,6 +388,7 @@
     });
 
     document.getElementById("empty").hidden = state.tasks.length > 0;
+    document.getElementById("undoBtn").disabled = history.length === 0;
     buildTrack();
     tick();
   }
@@ -344,7 +403,10 @@
     var done = function(commit){
       if(!editing) return;
       editing = null;
-      if(commit && input.value.trim()) t.name = input.value.trim();
+      if(commit && input.value.trim() && input.value.trim() !== t.name){
+        snapshot();
+        t.name = input.value.trim();
+      }
       save(); render();
     };
     input.addEventListener("keydown", function(e){
@@ -354,6 +416,39 @@
     });
     input.addEventListener("blur", function(){ done(true); });
     input.addEventListener("click", function(e){ e.stopPropagation(); });
+  }
+
+  function editDur(t, durEl){
+    if(editing) return;
+    editing = t.id;
+    var input = document.createElement("input");
+    input.className = "timeedit";
+    input.value = hms(totals(Date.now())[t.id] || 0);
+    input.setAttribute("aria-label", "Time for " + t.name);
+    durEl.replaceWith(input);
+    input.focus(); input.select();
+    var done = function(commit){
+      if(!editing) return;
+      var ms = commit ? parseDur(input.value) : null;
+      if(commit && ms == null && input.value.trim()){
+        toast("Try 1:30:00, 90m or 1h30");
+        input.focus(); input.select();
+        return;
+      }
+      editing = null;
+      if(ms != null){
+        snapshot();
+        t.adjust = Math.round(ms - (rawTotals(Date.now())[t.id] || 0));
+        save();
+      }
+      render();
+    };
+    input.addEventListener("keydown", function(e){
+      if(e.key === "Enter") done(true);
+      if(e.key === "Escape") done(false);
+      e.stopPropagation();
+    });
+    input.addEventListener("blur", function(){ done(true); });
   }
 
   function buildTrack(){
@@ -467,13 +562,17 @@
   }
 
   function csv(){
-    var out = ["task,start,end,seconds"];
+    var out = ["task,start,end,seconds,note"];
+    var q = function(s){ return '"' + String(s).replace(/"/g,'""') + '"'; };
     state.segments.forEach(function(s){
       var t = byId(s.taskId), end = s.end == null ? Date.now() : s.end;
-      out.push('"' + (t ? t.name.replace(/"/g,'""') : "?") + '",' +
+      out.push(q(t ? t.name : "?") + "," +
                new Date(s.start).toISOString() + "," +
                new Date(end).toISOString() + "," +
-               Math.round((end - s.start)/1000));
+               Math.round((end - s.start)/1000) + ",");
+    });
+    state.tasks.forEach(function(t){
+      if(t.adjust) out.push(q(t.name) + ",,," + Math.round(t.adjust/1000) + ",manual correction");
     });
     return out.join("\n");
   }
@@ -512,17 +611,21 @@
     if(!state.segments.length){ toast("Nothing tracked yet"); return; }
     download(csv(), "Timers-" + new Date().toISOString().slice(0,10) + ".csv");
   });
+  document.getElementById("undoBtn").addEventListener("click", undo);
   document.getElementById("clearBtn").addEventListener("click", function(){
     if(!state.tasks.length && !state.segments.length) return;
     if(!confirm("Delete all tasks and tracked time?")) return;
+    snapshot();
     state = {tasks:[], segments:[]}; save(); render();
-    toast("Cleared");
+    toast("Cleared — undo is still available");
   });
 
   document.addEventListener("keydown", function(e){
-    if(editing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if(editing) return;
     var tag = (e.target.tagName || "").toLowerCase();
     if(tag === "input" || tag === "textarea") return;
+    if((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z"){ e.preventDefault(); undo(); return; }
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
     if(e.key === "0" || e.key === "Escape"){ stop(); return; }
     var n = parseInt(e.key, 10);
     if(n >= 1 && n <= 9 && state.tasks[n-1]) start(state.tasks[n-1].id);
